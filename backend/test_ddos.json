@@ -1,0 +1,8 @@
+{
+"user_id": "ddos_tester_123",
+"ip_address": "10.0.0.99",
+"user_agent": "Mozilla/5.0 (Custom Request)",
+"http_method": "GET",
+"request_uri": "/api/v1/status",
+"request_body": "healthcheck"
+}
