@@ -9,9 +9,13 @@ import uuid
 import numpy as np
 from typing import Dict, Any, Optional
 import httpx
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Import existing AI detection components
-from app.ai_detection_module import MLDetectionModule
+from app.gemini_ai_detector import GeminiOnlyDetector
 from app.firewall_enforce import FirewallEnforce
 
 class WAFRequest(BaseModel):
@@ -53,7 +57,7 @@ class AIWAFService:
             allow_headers=["*"],
         )
         
-        self.ml_detector = MLDetectionModule()
+        self.gemini_detector = GeminiOnlyDetector()
         self.firewall_enforcer = FirewallEnforce()
         self.network_monitor_url = "http://localhost:8004"  # Current Network service
         self.setup_routes()
@@ -66,7 +70,9 @@ class AIWAFService:
             """WAF service health check"""
             return {
                 "status": "AI WAF Operational",
-                "model_loaded": self.ml_detector.is_model_loaded,
+                "ml_model_loaded": False,
+                "gemini_enabled": self.gemini_detector.gemini_detector.enabled,
+                "primary_detector": "gemini" if self.gemini_detector.gemini_detector.enabled else "fallback",
                 "firewall_ready": True
             }
         
@@ -80,33 +86,37 @@ class AIWAFService:
             request_id = request_data.request_id or str(uuid.uuid4())
             
             try:
-                # 1. Extract features from request data
-                features = self._extract_features(request_data)
-                
-                # 2. Get network context from Current Network service
+                # 1. Get network context from Current Network service
                 network_context = await self._get_network_context(request_data.source_ip)
                 
-                # 3. Combine features with network context
-                enhanced_features = self._enhance_features_with_network(features, network_context)
+                # 4. Prepare request data for hybrid analysis
+                request_dict = {
+                    'source_ip': request_data.source_ip,
+                    'method': request_data.request_method,
+                    'uri': request_data.request_uri,
+                    'body': request_data.request_body,
+                    'user_agent': request_data.user_agent,
+                    'headers': request_data.headers
+                }
                 
-                # 4. Run AI detection
-                threat_result = self.ml_detector.predict(enhanced_features)
+                # 2. Run Gemini AI detection
+                analysis_result = await self.gemini_detector.analyze_request(request_dict)
                 
-                # 5. Determine action based on threat level
-                action = self._determine_action(threat_result)
+                # 6. Determine action based on analysis result
+                action = self._determine_action_from_analysis(analysis_result)
                 
-                # 6. Execute firewall action if needed
+                # 7. Execute firewall action if needed
                 firewall_action = None
                 if action["firewall_action"]:
                     firewall_action = await self._execute_firewall_action(
-                        request_id, request_data.source_ip, threat_result, action["firewall_action"]
+                        request_id, request_data.source_ip, analysis_result, action["firewall_action"]
                     )
                 
                 return WAFResponse(
                     request_id=request_id,
                     threat_level=action["threat_level"],
-                    classification=threat_result["classification"],
-                    confidence=threat_result["confidence"],
+                    classification=analysis_result.get("final_classification", analysis_result.get("classification", "Unknown")),
+                    confidence=analysis_result.get("final_confidence", analysis_result.get("confidence", 0.0)),
                     action_taken=action["action_taken"],
                     firewall_action=firewall_action
                 )
@@ -127,29 +137,7 @@ class AIWAFService:
             # This could involve retraining thresholds, updating patterns, etc.
             return {"status": "feedback_received", "message": "Network feedback processed"}
     
-    def _extract_features(self, request_data: WAFRequest) -> np.ndarray:
-        """Extract ML features from request data"""
-        # Similar to existing calculate_waf_features but adapted for WAF service
-        payload_length = len(request_data.request_body)
         
-        # User agent scoring
-        user_agent_score = 0.95
-        if any(bot in request_data.user_agent.lower() for bot in ['bot', 'spider', 'crawler']):
-            user_agent_score = 0.1
-        elif 'python-requests' in request_data.user_agent.lower():
-            user_agent_score = 0.4
-        
-        # Request rate (will be enhanced with network context)
-        request_rate = self.ml_detector.update_rate_tracker(request_data.source_ip)
-        
-        # Neuro independence score
-        neuro_score = user_agent_score * 0.9
-        malicious_patterns = ['select * from', 'union all select', '<script>', 'eval(']
-        if any(pattern in request_data.request_body.lower() for pattern in malicious_patterns):
-            neuro_score = 0.05
-        
-        return np.array([[user_agent_score, payload_length, request_rate, neuro_score]])
-    
     async def _get_network_context(self, source_ip: str) -> Dict[str, Any]:
         """Get network context from Current Network service"""
         try:
@@ -163,14 +151,7 @@ class AIWAFService:
             # Fallback if network service is unavailable
             return {"status": "unavailable", "anomaly_score": 0.0}
     
-    def _enhance_features_with_network(self, features: np.ndarray, network_context: Dict[str, Any]) -> np.ndarray:
-        """Enhance features with network monitoring context"""
-        # Add network anomaly score to features
-        anomaly_score = network_context.get("anomaly_score", 0.0)
-        enhanced_features = features.copy()
-        enhanced_features[0][2] = enhanced_features[0][2] * (1 + anomaly_score)  # Boost request rate with anomaly
-        return enhanced_features
-    
+        
     def _determine_action(self, threat_result: Dict[str, Any]) -> Dict[str, str]:
         """Determine action based on threat analysis"""
         classification = threat_result["classification"]
@@ -206,6 +187,40 @@ class AIWAFService:
                 "action_taken": "MONITOR",
                 "firewall_action": None
             }
+    
+    def _determine_action_from_analysis(self, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Determine action based on hybrid analysis result"""
+        threat_level = analysis_result.get("final_threat_level", analysis_result.get("threat_level", "LOW"))
+        confidence = analysis_result.get("final_confidence", analysis_result.get("confidence", 0.0))
+        classification = analysis_result.get("final_classification", analysis_result.get("classification", "Normal"))
+        recommended_action = analysis_result.get("recommended_action", "MONITOR")
+        
+        # Use Gemini's recommendation if available, otherwise fall back to logic
+        if recommended_action and recommended_action in ["ALLOW", "MONITOR", "BLOCK"]:
+            action_taken = recommended_action
+        else:
+            # Fallback logic based on threat level and confidence
+            if threat_level == "CRITICAL" and confidence > 0.6:
+                action_taken = "BLOCK"
+            elif threat_level == "HIGH" and confidence > 0.7:
+                action_taken = "BLOCK"
+            elif threat_level in ["MEDIUM", "HIGH"] and confidence > 0.5:
+                action_taken = "MONITOR"
+            else:
+                action_taken = "ALLOW"
+        
+        # Determine firewall action
+        firewall_action = None
+        if action_taken == "BLOCK":
+            firewall_action = "BLOCK_IP"
+        elif action_taken == "MONITOR" and threat_level in ["MEDIUM", "HIGH"]:
+            firewall_action = "RATE_LIMIT"
+        
+        return {
+            "threat_level": threat_level,
+            "action_taken": action_taken,
+            "firewall_action": firewall_action
+        }
     
     async def _execute_firewall_action(self, request_id: str, source_ip: str, threat_result: Dict[str, Any], action: str) -> Dict[str, Any]:
         """Execute firewall action and return result"""

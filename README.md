@@ -13,21 +13,71 @@ DFD-compliant microservices architecture:
 
 ## Quick Start
 
-### 1. Start Backend Services
+### 1. Setup Gemini API (Optional but Recommended)
+```bash
+cd backend
+python3 setup_gemini.py
+```
+Get your API key from: https://makersuite.google.com/app/apikey
+
+### 2. Install Dependencies
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+### 3. Start Backend Services
 ```bash
 cd backend
 python3 run_dfd_system.py
 ```
 
-### 2. Start Frontend
+### 4. Start Frontend
 ```bash
 cd Frontend
 npm start
 ```
 
-### 3. Access Dashboard
+### 5. Access Dashboard
 - Open http://localhost:3000
 - Login with: `admin / admin123` or `user / user123`
+
+## Gemini AI Integration
+
+### Features
+- **Enhanced Threat Classification**: Uses Google Gemini for LLM-based analysis
+- **Hybrid Detection**: Combines traditional ML with AI for better accuracy
+- **Detailed Reasoning**: Provides explanations for threat classifications
+- **Specific Indicators**: Identifies exact patterns that triggered alerts
+- **Recommended Actions**: Suggests appropriate security responses
+
+### Setup Commands
+```bash
+# Setup Gemini API key
+python3 setup_gemini.py
+
+# Test Gemini connection
+python3 setup_gemini.py --test
+
+# View Gemini features
+python3 setup_gemini.py --features
+```
+
+### Supported Threat Types
+- SQL Injection
+- Cross-Site Scripting (XSS)
+- Command Injection
+- Path Traversal
+- DDoS Attacks
+- Brute Force Attacks
+- Bot/Scanner Activity
+- Normal/Legitimate Traffic
+
+### Configuration
+Set your Gemini API key in `.env` file:
+```bash
+GEMINI_API_KEY=your_gemini_api_key_here
+```
 
 ## Testing Scripts
 

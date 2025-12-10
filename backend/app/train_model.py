@@ -8,8 +8,8 @@ import os
 
 # --- Configuration ---
 # Define the output path for the serialized model
-MODEL_DIR = 'models'
-MODEL_FILE = os.path.join(MODEL_DIR, 'waf_ml_model.pkl')
+MODEL_DIR = 'data'
+MODEL_FILE = os.path.join(MODEL_DIR, 'trained_model.pkl')
 
 # Define the features that match the Pydantic schema in app/main.py
 # [user_agent_score, payload_length, request_rate, neuro_independence_score]
