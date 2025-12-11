@@ -1,9 +1,9 @@
 fastapi
 uvicorn
 pydantic
-scikit-learn
-numpy
 python-dotenv
-scapy
-aiohttp
-google-generativeai
+httpx
+numpy
+scikit-learn
+pandas
+joblib

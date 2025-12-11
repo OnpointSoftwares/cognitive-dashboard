@@ -133,11 +133,13 @@ class GeminiAIDetector:
                 async with session.post(url, json=payload, timeout=30) as response:
                     if response.status == 200:
                         result = await response.json()
+                        print(f"Gemini API response: {result}")
                         analysis = self._parse_gemini_response(result)
                         self._cache_result(cache_key, analysis)
                         return analysis
                     else:
                         error_text = await response.text()
+                        print(f"Gemini API error: {response.status} - {error_text}")
                         return {
                             "error": f"Gemini API error: {response.status} - {error_text}",
                             "classification": "API_Error",
@@ -179,6 +181,8 @@ Return JSON: {{"classification": "SQL_Injection|XSS|Command_Injection|Path_Trave
             content = response.get('candidates', [{}])[0].get('content', {})
             text = content.get('parts', [{}])[0].get('text', '')
             
+            print(f"Gemini response text: {text[:500]}")
+            
             # Extract JSON from response
             start_idx = text.find('{')
             end_idx = text.rfind('}') + 1
@@ -214,7 +218,7 @@ Return JSON: {{"classification": "SQL_Injection|XSS|Command_Injection|Path_Trave
                 }
             else:
                 raise ValueError("No JSON found in response")
-                
+                    
         except Exception as e:
             return {
                 "error": f"Failed to parse Gemini response: {str(e)}",
@@ -223,6 +227,7 @@ Return JSON: {{"classification": "SQL_Injection|XSS|Command_Injection|Path_Trave
                 "threat_level": "LOW",
                 "source": "gemini_ai"
             }
+
 
 class GeminiOnlyDetector:
     """
@@ -235,11 +240,21 @@ class GeminiOnlyDetector:
         
     async def analyze_request(self, request_data: Dict[str, Any], features: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Gemini-only analysis
+        Gemini analysis with fallback
         """
         if self.gemini_detector.enabled:
             # Use Gemini for analysis
             gemini_result = await self.gemini_detector.analyze_with_gemini(request_data)
+            
+            # Check if Gemini failed (quota limit, API error, etc.)
+            if 'error' in gemini_result or gemini_result.get('classification') in ['API_Error', 'Parse_Error']:
+                # Use fallback classification
+                fallback_result = self._fallback_classification(request_data)
+                return {
+                    **fallback_result,
+                    "analysis_method": "fallback_rules",
+                    "gemini_error": gemini_result.get('error', 'Gemini API failed')
+                }
             
             return {
                 **gemini_result,
@@ -251,23 +266,65 @@ class GeminiOnlyDetector:
             }
         else:
             # Fallback classification when Gemini not available
+            fallback_result = self._fallback_classification(request_data)
             return {
-                "classification": "Normal",
-                "confidence": 0.5,
-                "threat_level": "LOW",
-                "analysis_method": "fallback",
-                "recommended_action": "ALLOW",
+                **fallback_result,
+                "analysis_method": "fallback_rules",
                 "error": "Gemini API not configured"
             }
     
-    def _get_action_from_ml_result(self, ml_result: Dict[str, Any]) -> str:
-        """Convert ML result to recommended action"""
-        classification = ml_result.get('classification', 'Normal')
-        confidence = ml_result.get('confidence', 0.0)
-        
-        if classification == 'Normal':
-            return 'ALLOW'
-        elif classification in ['DDoS_Attack', 'Intrusion_Attempt'] and confidence > 0.7:
-            return 'BLOCK'
-        else:
-            return 'MONITOR'
+    def _fallback_classification(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback rule-based classification when Gemini is unavailable"""
+        body = request_data.get('body', '').lower()
+        uri = request_data.get('uri', '').lower()
+        user_agent = request_data.get('user_agent', '').lower()
+            
+        # SQL Injection patterns
+        sql_patterns = ['union select', 'or 1=1', 'drop table', 'insert into', 'delete from', '--', '/*', '*/']
+        if any(pattern in body for pattern in sql_patterns):
+            return {
+                "classification": "SQL_Injection",
+                "threat_level": "HIGH",
+                "confidence": 0.8,
+                "reasoning": "SQL injection pattern detected in request body",
+                "indicators": [pattern for pattern in sql_patterns if pattern in body],
+                "recommended_action": "BLOCK",
+                "source": "fallback_rules"
+            }
+            
+        # XSS patterns
+        xss_patterns = ['<script', 'javascript:', 'onerror=', 'onload=', '<iframe', 'eval(']
+        if any(pattern in body for pattern in xss_patterns):
+            return {
+                "classification": "XSS",
+                "threat_level": "HIGH", 
+                "confidence": 0.7,
+                "reasoning": "Cross-site scripting pattern detected",
+                "indicators": [pattern for pattern in xss_patterns if pattern in body],
+                "recommended_action": "BLOCK",
+                "source": "fallback_rules"
+            }
+            
+        # Bot/Scanner patterns
+        bot_patterns = ['sqlmap', 'nikto', 'nmap', 'scanner', 'bot', 'spider', 'crawler']
+        if any(pattern in user_agent for pattern in bot_patterns):
+            return {
+                "classification": "Bot_Activity",
+                "threat_level": "MEDIUM",
+                "confidence": 0.6,
+                "reasoning": "Bot or scanner user agent detected",
+                "indicators": [pattern for pattern in bot_patterns if pattern in user_agent],
+                "recommended_action": "MONITOR",
+                "source": "fallback_rules"
+            }
+            
+        # Default to normal
+        return {
+            "classification": "Normal",
+            "threat_level": "LOW",
+            "confidence": 0.5,
+            "reasoning": "No malicious patterns detected",
+            "indicators": [],
+            "recommended_action": "ALLOW",
+            "source": "fallback_rules"
+        }

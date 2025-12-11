@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import existing AI detection components
-from app.gemini_ai_detector import GeminiOnlyDetector
+from app.local_security_detector import LocalSecurityDetector
 from app.firewall_enforce import FirewallEnforce
 
 class WAFRequest(BaseModel):
@@ -57,7 +57,7 @@ class AIWAFService:
             allow_headers=["*"],
         )
         
-        self.gemini_detector = GeminiOnlyDetector()
+        self.local_detector = LocalSecurityDetector()
         self.firewall_enforcer = FirewallEnforce()
         self.network_monitor_url = "http://localhost:8004"  # Current Network service
         self.setup_routes()
@@ -71,8 +71,8 @@ class AIWAFService:
             return {
                 "status": "AI WAF Operational",
                 "ml_model_loaded": False,
-                "gemini_enabled": self.gemini_detector.gemini_detector.enabled,
-                "primary_detector": "gemini" if self.gemini_detector.gemini_detector.enabled else "fallback",
+                "local_models_enabled": self.local_detector.enabled,
+                "primary_detector": "local_models",
                 "firewall_ready": True
             }
         
@@ -99,8 +99,8 @@ class AIWAFService:
                     'headers': request_data.headers
                 }
                 
-                # 2. Run Gemini AI detection
-                analysis_result = await self.gemini_detector.analyze_request(request_dict)
+                # 2. Run Local AI detection
+                analysis_result = await self.local_detector.analyze_request(request_dict)
                 
                 # 6. Determine action based on analysis result
                 action = self._determine_action_from_analysis(analysis_result)

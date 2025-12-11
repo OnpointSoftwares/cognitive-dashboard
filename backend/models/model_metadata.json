@@ -1,0 +1,10 @@
+{
+  "model_types": [
+    "random_forest",
+    "logistic_regression",
+    "svm"
+  ],
+  "vectorizer_type": "TfidfVectorizer",
+  "max_features": 5000,
+  "training_date": "2025-12-11T05:35:03.697532"
+}
